@@ -1,0 +1,6 @@
+{
+    "queue_name":[
+        "tracking-worker",
+        "transaction-worker"
+    ]
+}
