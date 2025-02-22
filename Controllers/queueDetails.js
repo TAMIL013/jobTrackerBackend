@@ -1,6 +1,6 @@
 const {dynamoDB, dynamoDBDoc} =require('../DBConnection/dbConnection')
 const config = require('../JSON/Config/config.json')
-
+const { v4: uuid } = require('uuid');
 async function ensureQueueExist(tableNames){
     try {
         for(let queue of tableNames){
@@ -66,7 +66,6 @@ const getAllQueues = async function(request,response){
 const getAllStatus = async function(request,response){
     try{
        let queue= request.body.queue_name;
-       console.log(queue)
        let lastEvaluatedKey= null
        let statusCount={}
        do{
@@ -80,7 +79,6 @@ const getAllStatus = async function(request,response){
            if(lastEvaluatedKey) params['ExclusiveStartKey']=lastEvaluatedKey
            let result =await dynamoDB.scan(params).promise()
            lastEvaluatedKey=result.lastEvaluatedKey
-           console.log('res',result.Items)
            result.Items.forEach((item) => {
             if (item.status) {
               statusCount[item.status] = (statusCount[item.status] || 0) + 1;
@@ -135,4 +133,84 @@ const getAllJobs = async function(request,response){
         })
     }
 }
-module.exports = {getAllQueues,getAllStatus,getAllJobs}
+const addJob = async function(request,response){
+    try{
+        let queue= request.body.queue_name;
+        let type = request.body.type;
+        let data = request.body.data;
+        let run_at =request.body.run_at;
+        let created_at=Math.floor(new Date().getTime()/1000);
+        let updated_at=created_at;
+
+        let today= new Date();
+        today.setHours(0,0,0,0);
+        let givenDate= new Date(run_at);
+        run_at=Math.floor((new Date(run_at)).getTime() / 1000) ;
+        givenDate.setHours(0,0,0,0);
+        
+        let status = today.getTime()===givenDate.getTime()? 'pending':'delayed';
+
+        let params={
+            TableName:queue,
+            Item: {
+                job_id: uuid(),        
+                status: status,    
+                type: type,        
+                data: data,
+                created_at: created_at,
+                updated_at: updated_at
+            }
+        }
+        await dynamoDB.put(params).promise()
+        return response.status(200).send({
+            message:'job added'
+        })
+
+    }catch(er){
+        return response.status(500).send({
+            error:er,
+            message:'can\'t add job'
+        })
+    }
+}
+const deleteJob =async function(request,response){
+    try{
+        let queue= request.body.queue_name;
+        let status = request.body.status;
+        let jobIds = request.body.idList;
+        while(jobIds.length){
+            let ids= jobIds.splice(0,100) 
+            let deletePromises=[]
+            for(let id of ids){
+                try{
+                    let params={
+                        TableName:queue,
+                        Key:{
+                            'status':status,
+                            'job_id':id
+                        }
+                    }
+                    await dynamoDB.delete(params).promise();
+                    deletePromises.push(Promise.resolve(id))
+                }catch(er){
+                    deletePromises.push(Promise.reject(id))
+                }
+            }
+            let failedItems=(await Promise.allSettled(deletePromises)).filter(item => item.status !='fulfilled').map(item => item.value)
+            if(failedItems.length){
+                return response.status(200).send({
+                    failedItems:failedItems
+                })
+            }
+        }
+        return response.status(200).send({
+            message:'job added'
+        })
+    }catch(er){
+        return response.status(500).send({
+            error:er,
+            message:'can\'t add job'
+        })
+    }
+}
+module.exports = {getAllQueues,getAllStatus,getAllJobs,addJob,deleteJob}
